@@ -1,10 +1,14 @@
 import requests
-import json
+from datetime import datetime, timedelta
+import pandas as pd
+from decouple import config
+import logging
+import sys
+from tqdm import tqdm
 
-# Create a session to manage cookies and headers
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 session = requests.Session()
-
-# Define the headers to mimic a browser
 headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36',
     'Accept': 'application/json, text/javascript, */*; q=0.01',
@@ -13,42 +17,132 @@ headers = {
     'Connection': 'keep-alive',
 }
 
-# Function to browse a few websites to gather cookies
 def browse_initial_sites(session, headers):
+    logging.info("Starting initial site browsing.")
     sites = [
         "https://www.google.com",
         "https://www.wikipedia.org",
         "https://www.github.com"
     ]
     for site in sites:
-        session.get(site, headers=headers)
+        try:
+            session.get(site, headers=headers)
+            logging.info(f"Browsed site: {site}")
+        except requests.RequestException as e:
+            logging.error(f"Error browsing site {site}: {e}")
 
-# Browse initial sites to establish session history
-browse_initial_sites(session, headers)
+def get_conversion_rate(fromCurrency, toCurrency, day):
+    url = "https://usa.visa.com/cmsapi/fx/rates"
+    params = {
+        'amount': '1',
+        'fee': '2',
+        'utcConvertedDate': day,
+        'exchangedate': day,
+        'fromCurr': fromCurrency,
+        'toCurr': toCurrency
+    }
 
-# URL to send the request to
-url = "https://usa.visa.com/cmsapi/fx/rates"
+    headers.update({
+        'Referer': 'https://usa.visa.com/support/consumer/travel-support/exchange-rate-calculator.html',
+    })
 
-# Parameters to send in the GET request
-params = {
-    'amount': '1',
-    'fee': '2',
-    'utcConvertedDate': '06/22/2024',
-    'exchangedate': '06/20/2024',
-    'fromCurr': 'USD',
-    'toCurr': 'INR'
-}
+    try:
+        response = session.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        res = response.json()
+        return res["convertedAmount"]
+    except requests.RequestException as e:
+        logging.error(f"Error fetching conversion rate: {e}")
+    return None
 
-# Update headers to include the referer after browsing initial sites
-headers.update({
-    'Referer': 'https://usa.visa.com/support/consumer/travel-support/exchange-rate-calculator.html',
-})
+def read_excel_file(file_path, sheet_name):
+    logging.info(f"Reading Excel file: {file_path}, sheet: {sheet_name}.")
+    try:
+        return pd.read_excel(file_path, sheet_name=sheet_name)
+    except Exception as e:
+        logging.error(f"Error reading Excel file: {e}")
+        raise
 
-# Send the GET request to the target URL using the session
-response = session.get(url, headers=headers, params=params)
+def validate_columns(df, required_columns):
+    logging.info("Validating columns in the Excel file.")
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    if missing_columns:
+        logging.error(f"Missing columns in Excel file: {missing_columns}")
+        raise ValueError(f"Missing columns: {missing_columns}")
+    return df.astype(str)
 
-# Check the response status and pretty-print the JSON content if successful
-if response.status_code == 200:
-    print(json.dumps(response.json(), indent=4))
-else:
-    print(f"Failed to retrieve data: {response.status_code}")
+def convert_excel_dates(df, date_columns):
+    for col in date_columns:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors='coerce')
+            logging.info(f"Converted column '{col}' to datetime.")
+    return df
+
+def save_rates_to_excel(file_path, rates_df, sheet_name, mode='a'):
+    logging.info(f"Saving rates to Excel file: {file_path}, sheet: {sheet_name}.")
+    try:
+        with pd.ExcelWriter(file_path, mode=mode, engine='openpyxl', if_sheet_exists='replace') as writer:
+            rates_df.to_excel(writer, sheet_name=sheet_name, index=False)
+        logging.info("Rates saved to Excel file successfully.")
+    except Exception as e:
+        logging.error(f"Error saving to Excel file: {e}")
+
+def update_excel_with_products(file_path, sheet_name, output_sheet_name):
+    lead_sheet = read_excel_file(file_path, sheet_name)
+    required_columns = ["FromCurrency", "ToCurrency", "FromDate", "ToDate"]
+    lead_sheet = validate_columns(lead_sheet, required_columns)
+    lead_sheet = convert_excel_dates(lead_sheet, ["FromDate", "ToDate"])
+
+    browse_initial_sites(session, headers)
+
+    rates_data = []
+    last_from_currency = None
+    last_to_currency = None
+
+    total_rows = len(lead_sheet)
+    with tqdm(total=total_rows, file=sys.stdout, desc="Processing rows") as pbar:
+        for index, row in lead_sheet.iterrows():
+            try:
+                fromCurrency = row["FromCurrency"]
+                toCurrency = row["ToCurrency"]
+                fromDate = row["FromDate"]
+                toDate = row["ToDate"]
+
+                if fromCurrency and toCurrency and pd.notna(fromDate) and pd.notna(toDate) and (fromCurrency != toCurrency):
+                    logging.info(f"Fetching conversion rates for {fromCurrency} to {toCurrency}")
+                    currentDate = fromDate
+                    while currentDate <= toDate:
+                        rate = get_conversion_rate(fromCurrency, toCurrency, currentDate.strftime('%m/%d/%Y'))
+                        if rate is not None:
+                            rate_entry = {
+                                'Date': currentDate.strftime('%Y-%m-%d'),
+                                'Rate': rate,
+                                'FromCurrency': fromCurrency if fromCurrency != last_from_currency else None,
+                                'ToCurrency': toCurrency if toCurrency != last_to_currency else None
+                            }
+                            rates_data.append(rate_entry)
+                            last_from_currency = fromCurrency
+                            last_to_currency = toCurrency
+
+                            # Save incrementally after every 100 entries
+                            if len(rates_data) % 100 == 0:
+                                rates_df = pd.DataFrame(rates_data)
+                                save_rates_to_excel(file_path, rates_df, output_sheet_name, mode='a')
+                                rates_data = []  # Clear the list after saving
+
+                        currentDate += timedelta(days=1)
+                pbar.update(1)
+            except Exception as e:
+                logging.error(f"Error processing row {index}: {e}")
+
+        if rates_data:
+            rates_df = pd.DataFrame(rates_data)
+            save_rates_to_excel(file_path, rates_df, output_sheet_name, mode='a')
+            logging.info(f"Excel file updated successfully. Saved to {file_path}")
+
+if __name__ == "__main__":
+    update_excel_with_products(
+        file_path='./sheet.xlsx',  # config('excel_path'),
+        sheet_name='Sheet1',  # config('sheetname'),
+        output_sheet_name='Rates'  # Specify the output sheet name
+    )
