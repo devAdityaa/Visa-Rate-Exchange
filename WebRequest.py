@@ -79,11 +79,9 @@ def convert_excel_dates(df, date_columns):
     return df
 
 def save_rates_to_excel(file_path, rates_df, sheet_name, mode='a'):
-    logging.info(f"Saving rates to Excel file: {file_path}, sheet: {sheet_name}.")
     try:
         with pd.ExcelWriter(file_path, mode=mode, engine='openpyxl', if_sheet_exists='replace') as writer:
             rates_df.to_excel(writer, sheet_name=sheet_name, index=False)
-        logging.info("Rates saved to Excel file successfully.")
     except Exception as e:
         logging.error(f"Error saving to Excel file: {e}")
 
@@ -115,10 +113,10 @@ def update_excel_with_products(file_path, sheet_name, output_sheet_name):
                         rate = get_conversion_rate(fromCurrency, toCurrency, currentDate.strftime('%m/%d/%Y'))
                         if rate is not None:
                             rate_entry = {
-                                'Date': currentDate.strftime('%Y-%m-%d'),
-                                'Rate': rate,
                                 'FromCurrency': fromCurrency if fromCurrency != last_from_currency else None,
-                                'ToCurrency': toCurrency if toCurrency != last_to_currency else None
+                                'ToCurrency': toCurrency if toCurrency != last_to_currency else None,
+                                'Date': currentDate.strftime('%Y-%m-%d'),
+                                'Rate': rate
                             }
                             rates_data.append(rate_entry)
                             last_from_currency = fromCurrency
@@ -129,7 +127,10 @@ def update_excel_with_products(file_path, sheet_name, output_sheet_name):
                                 rates_df = pd.DataFrame(rates_data)
                                 save_rates_to_excel(file_path, rates_df, output_sheet_name, mode='a')
                                 rates_data = []  # Clear the list after saving
-
+                            if rates_data:
+                                rates_df = pd.DataFrame(rates_data)
+                                save_rates_to_excel(file_path, rates_df, output_sheet_name, mode='a')
+                    
                         currentDate += timedelta(days=1)
                 pbar.update(1)
             except Exception as e:
