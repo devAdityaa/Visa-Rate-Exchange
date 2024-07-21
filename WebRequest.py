@@ -1,7 +1,6 @@
 import requests
 from datetime import datetime, timedelta
 import pandas as pd
-from decouple import config
 import logging
 import sys
 from tqdm import tqdm
