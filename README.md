@@ -28,8 +28,8 @@ This script reads currency exchange rates from an Excel sheet and fetches the co
 1. **Clone the repository:**
 
    ```bash
-   git clone https://github.com/yourusername/exchange-rate-converter.git
-   cd exchange-rate-converter
+   git clone https://github.com/devAdityaa/Visa-Rate-Exchange.git
+   cd Visa-Rate-Exchange
 
 2. **Install Requirements**
 
@@ -38,6 +38,6 @@ This script reads currency exchange rates from an Excel sheet and fetches the co
 
 ###Run the script
 ```bash
-python3 exchange_rate_converter.py
+python3 WebRequest.py
 ```
 Update the excelsheet with your own intended conversions. The outputs are saved in a different sheet in the same file ( default sheetname is Rates ).
