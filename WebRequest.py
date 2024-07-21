@@ -1,7 +1,6 @@
 import requests
 from datetime import datetime, timedelta
 import pandas as pd
-from decouple import config
 import logging
 import sys
 from tqdm import tqdm
@@ -71,13 +70,6 @@ def validate_columns(df, required_columns):
         raise ValueError(f"Missing columns: {missing_columns}")
     return df.astype(str)
 
-def convert_excel_dates(df, date_columns):
-    for col in date_columns:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors='coerce')
-            logging.info(f"Converted column '{col}' to datetime.")
-    return df
-
 def save_rates_to_excel(file_path, rates_df, sheet_name, mode='a'):
     try:
         with pd.ExcelWriter(file_path, mode=mode, engine='openpyxl', if_sheet_exists='replace') as writer:
@@ -89,13 +81,22 @@ def update_excel_with_products(file_path, sheet_name, output_sheet_name):
     lead_sheet = read_excel_file(file_path, sheet_name)
     required_columns = ["FromCurrency", "ToCurrency", "FromDate", "ToDate"]
     lead_sheet = validate_columns(lead_sheet, required_columns)
-    lead_sheet = convert_excel_dates(lead_sheet, ["FromDate", "ToDate"])
+
+    # Convert dates in the 'FromDate' and 'ToDate' columns
+    lead_sheet["FromDate"] = pd.to_datetime(lead_sheet["FromDate"], errors='coerce')
+    lead_sheet["ToDate"] = pd.to_datetime(lead_sheet["ToDate"], errors='coerce')
+
+    # Extract the fromDate and toDate from the first row
+    fromDate = lead_sheet.at[0, "FromDate"]
+    toDate = lead_sheet.at[0, "ToDate"]
+
+    if pd.isna(fromDate) or pd.isna(toDate):
+        logging.error("FromDate or ToDate in the first row is invalid.")
+        raise ValueError("FromDate or ToDate in the first row is invalid.")
 
     browse_initial_sites(session, headers)
 
     rates_data = []
-    last_from_currency = None
-    last_to_currency = None
 
     total_rows = len(lead_sheet)
     with tqdm(total=total_rows, file=sys.stdout, desc="Processing rows") as pbar:
@@ -103,33 +104,26 @@ def update_excel_with_products(file_path, sheet_name, output_sheet_name):
             try:
                 fromCurrency = row["FromCurrency"]
                 toCurrency = row["ToCurrency"]
-                fromDate = row["FromDate"]
-                toDate = row["ToDate"]
 
-                if fromCurrency and toCurrency and pd.notna(fromDate) and pd.notna(toDate) and (fromCurrency != toCurrency):
+                if fromCurrency and toCurrency and (fromCurrency != toCurrency):
                     logging.info(f"Fetching conversion rates for {fromCurrency} to {toCurrency}")
                     currentDate = fromDate
                     while currentDate <= toDate:
                         rate = get_conversion_rate(fromCurrency, toCurrency, currentDate.strftime('%m/%d/%Y'))
                         if rate is not None:
                             rate_entry = {
-                                'FromCurrency': fromCurrency if fromCurrency != last_from_currency else None,
-                                'ToCurrency': toCurrency if toCurrency != last_to_currency else None,
+                                'FromCurrency': fromCurrency,
+                                'ToCurrency': toCurrency,
                                 'Date': currentDate.strftime('%Y-%m-%d'),
                                 'Rate': rate
                             }
                             rates_data.append(rate_entry)
-                            last_from_currency = fromCurrency
-                            last_to_currency = toCurrency
 
                             # Save incrementally after every 100 entries
                             if len(rates_data) % 100 == 0:
                                 rates_df = pd.DataFrame(rates_data)
                                 save_rates_to_excel(file_path, rates_df, output_sheet_name, mode='a')
                                 rates_data = []  # Clear the list after saving
-                            if rates_data:
-                                rates_df = pd.DataFrame(rates_data)
-                                save_rates_to_excel(file_path, rates_df, output_sheet_name, mode='a')
                     
                         currentDate += timedelta(days=1)
                 pbar.update(1)
@@ -143,7 +137,7 @@ def update_excel_with_products(file_path, sheet_name, output_sheet_name):
 
 if __name__ == "__main__":
     update_excel_with_products(
-        file_path='./sheet.xlsx',  # config('excel_path'),
-        sheet_name='Sheet1',  # config('sheetname'),
-        output_sheet_name='Rates'  # Specify the output sheet name
+        file_path='./sheet.xlsx',
+        sheet_name='Sheet1',
+        output_sheet_name='Rates'
     )
