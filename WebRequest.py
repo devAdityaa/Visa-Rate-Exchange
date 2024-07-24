@@ -138,7 +138,7 @@ def update_excel_with_products(file_path, sheet_name, output_sheet_name):
 
 if __name__ == "__main__":
     update_excel_with_products(
-        file_path='./s3.xlsx',
+        file_path='./sheetgit .xlsx',
         sheet_name='Sheet1',
         output_sheet_name='Rates'
     )
