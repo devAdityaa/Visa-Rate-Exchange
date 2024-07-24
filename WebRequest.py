@@ -123,10 +123,11 @@ def update_excel_with_products(file_path, sheet_name, output_sheet_name):
                             if len(rates_data) % 100 == 0:
                                 rates_df = pd.DataFrame(rates_data)
                                 save_rates_to_excel(file_path, rates_df, output_sheet_name, mode='a')
-                                rates_data = []  # Clear the list after saving
                     
                         currentDate += timedelta(days=1)
                 pbar.update(1)
+                rates_df = pd.DataFrame(rates_data)
+                save_rates_to_excel(file_path, rates_df, output_sheet_name, mode='a')
             except Exception as e:
                 logging.error(f"Error processing row {index}: {e}")
 
